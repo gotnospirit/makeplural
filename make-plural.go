@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io/ioutil"
 	"net/http"
@@ -9,7 +10,6 @@ import (
 	"sort"
 	"strings"
 	"text/template"
-    "flag"
 )
 
 func get(url, key string, headers *string) (map[string]map[string]string, error) {
@@ -314,21 +314,21 @@ type Item struct {
 
 func createSource(headers string, ptr_plurals, ptr_ordinals *map[string]map[string]string) error {
 	var cultures []string
-    if "*" == *user_culture {
-        // On sait que len(ordinals) <= len(plurals)
-        for culture, _ := range *ptr_plurals {
-            cultures = append(cultures, culture)
-        }
-    } else {
-        for _, culture := range strings.Split(*user_culture, ",") {
-            culture = strings.TrimSpace(culture)
+	if "*" == *user_culture {
+		// On sait que len(ordinals) <= len(plurals)
+		for culture, _ := range *ptr_plurals {
+			cultures = append(cultures, culture)
+		}
+	} else {
+		for _, culture := range strings.Split(*user_culture, ",") {
+			culture = strings.TrimSpace(culture)
 
-            if _, ok := (*ptr_plurals)[culture]; !ok {
-                return fmt.Errorf("Aborted, `%s` not found...", culture)
-            }
-            cultures = append(cultures, culture)
-        }
-    }
+			if _, ok := (*ptr_plurals)[culture]; !ok {
+				return fmt.Errorf("Aborted, `%s` not found...", culture)
+			}
+			cultures = append(cultures, culture)
+		}
+	}
 	sort.Strings(cultures)
 
 	if 0 == len(cultures) {
@@ -380,7 +380,7 @@ func createSource(headers string, ptr_plurals, ptr_ordinals *map[string]map[stri
 var user_culture = flag.String("culture", "*", "Culture subset")
 
 func main() {
-    flag.Parse()
+	flag.Parse()
 
 	var headers string
 
