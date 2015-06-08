@@ -10,7 +10,88 @@ import (
 	"sort"
 	"strings"
 	"text/template"
+	"time"
 )
+
+type (
+	Source interface {
+		Culture() string
+		CultureId() string
+		Code() string
+	}
+
+	Test interface {
+		toString() string
+	}
+
+	FuncSource struct {
+		culture, vars, impl string
+	}
+
+	UnitTestSource struct {
+		culture string
+		tests   []Test
+	}
+
+	UnitTest struct {
+		ordinal         bool
+		expected, value string
+	}
+)
+
+func (x FuncSource) Culture() string {
+	return x.culture
+}
+
+func (x FuncSource) CultureId() string {
+	return Sanitize(x.culture)
+}
+
+func (x FuncSource) Code() string {
+	result := ""
+	if "" != x.vars {
+		result += x.vars + "\n"
+	}
+	result += x.impl
+	return result
+}
+
+func (x UnitTestSource) Culture() string {
+	return x.culture
+}
+
+func (x UnitTestSource) CultureId() string {
+	return Sanitize(x.culture)
+}
+
+func (x UnitTestSource) Code() string {
+	var result []string
+	for _, child := range x.tests {
+		result = append(result, "\t\t"+child.toString())
+	}
+	return strings.Join(result, "\n")
+}
+
+func (x UnitTest) toString() string {
+	return fmt.Sprintf(
+		"testNamedKey(t, fn, %s, `%s`, `%s`, %v)",
+		x.value,
+		x.expected,
+		fmt.Sprintf("fn("+x.value+", %v)", x.ordinal),
+		x.ordinal,
+	)
+}
+
+func Sanitize(input string) string {
+	var result string
+	for _, char := range input {
+		switch {
+		case char >= 'a' && char <= 'z', char >= 'A' && char <= 'Z':
+			result += string(char)
+		}
+	}
+	return result
+}
 
 func get(url, key string, headers *string) (map[string]map[string]string, error) {
 	fmt.Print("GET ", url)
@@ -175,6 +256,9 @@ func rule2code(key string, data map[string]string, ptr_keys *[]string, padding s
 		result := ""
 
 		if "other" == key {
+			if 1 == len(data) {
+				return padding + "return \"other\"\n"
+			}
 			result += padding + "default:\n"
 		} else {
 			cases := pattern2code(input, ptr_keys)
@@ -187,21 +271,80 @@ func rule2code(key string, data map[string]string, ptr_keys *[]string, padding s
 }
 
 func map2code(data map[string]string, ptr_keys *[]string, padding string) string {
-	if len(data) > 1 {
-		result := padding + "switch {\n"
-		result += rule2code("other", data, ptr_keys, padding)
-		result += rule2code("zero", data, ptr_keys, padding)
-		result += rule2code("one", data, ptr_keys, padding)
-		result += rule2code("two", data, ptr_keys, padding)
-		result += rule2code("few", data, ptr_keys, padding)
-		result += rule2code("many", data, ptr_keys, padding)
-		result += padding + "}\n"
-		return result
+	if 1 == len(data) {
+		return rule2code("other", data, ptr_keys, padding)
 	}
-	return padding + "return \"other\"\n"
+	result := padding + "switch {\n"
+	result += rule2code("other", data, ptr_keys, padding)
+	result += rule2code("zero", data, ptr_keys, padding)
+	result += rule2code("one", data, ptr_keys, padding)
+	result += rule2code("two", data, ptr_keys, padding)
+	result += rule2code("few", data, ptr_keys, padding)
+	result += rule2code("many", data, ptr_keys, padding)
+	result += padding + "}\n"
+	return result
 }
 
-func culture2code(ordinals, plurals map[string]string, padding string) (string, string) {
+func splitValues(input string) []string {
+	var result []string
+
+	pos := -1
+	for idx, char := range input {
+		switch {
+		case (char >= '0' && char <= '9') || '.' == char:
+			if -1 == pos {
+				pos = idx
+			}
+
+		// Inutile de générer un interval lorsque l'on rencontre '~' :)
+		case ' ' == char || ',' == char || '~' == char:
+			if -1 != pos {
+				result = append(result, input[pos:idx])
+				pos = -1
+			}
+		}
+	}
+
+	if -1 != pos {
+		result = append(result, input[pos:])
+	}
+	return result
+}
+
+func pattern2test(expected, input string, ordinal bool) []Test {
+	var result []Test
+
+	patterns := strings.Split(input, "@")
+	for _, pattern := range patterns {
+		if strings.HasPrefix(pattern, "integer") {
+			for _, value := range splitValues(pattern[8:]) {
+				result = append(result, UnitTest{ordinal, expected, value})
+			}
+		} else if strings.HasPrefix(pattern, "decimal") {
+			for _, value := range splitValues(pattern[8:]) {
+				result = append(result, UnitTest{ordinal, expected, value})
+			}
+		}
+	}
+	return result
+}
+
+func map2test(ordinals, plurals map[string]string) []Test {
+	var result []Test
+
+	for _, rule := range []string{"one", "two", "few", "many", "zero", "other"} {
+		if input, ok := ordinals["pluralRule-count-"+rule]; ok {
+			result = append(result, pattern2test(rule, input, true)...)
+		}
+
+		if input, ok := plurals["pluralRule-count-"+rule]; ok {
+			result = append(result, pattern2test(rule, input, false)...)
+		}
+	}
+	return result
+}
+
+func culture2code(ordinals, plurals map[string]string, padding string) (string, string, []Test) {
 	var code string
 	var keys []string
 
@@ -213,6 +356,7 @@ func culture2code(ordinals, plurals map[string]string, padding string) (string, 
 		code += padding + "}\n\n"
 		code += map2code(plurals, &keys, padding)
 	}
+	tests := map2test(ordinals, plurals)
 
 	vars := ""
 	max := len(keys)
@@ -252,10 +396,8 @@ func culture2code(ordinals, plurals map[string]string, padding string) (string, 
 				vars += padding + k + " := " + v + "\n"
 			}
 		}
-
-		vars += "\n"
 	}
-	return vars, code
+	return vars, code, tests
 }
 
 func toVar(input string, ptr_keys *[]string) string {
@@ -308,11 +450,7 @@ func varname(char uint8, keys []string) string {
 	return "_"
 }
 
-type Item struct {
-	Culture, Vars, Impl string
-}
-
-func createSource(headers string, ptr_plurals, ptr_ordinals *map[string]map[string]string) error {
+func createGoFiles(headers string, ptr_plurals, ptr_ordinals *map[string]map[string]string) error {
 	var cultures []string
 	if "*" == *user_culture {
 		// On sait que len(ordinals) <= len(plurals)
@@ -335,18 +473,9 @@ func createSource(headers string, ptr_plurals, ptr_ordinals *map[string]map[stri
 		return fmt.Errorf("Not enough data to create source...")
 	}
 
-	tmpl, err := template.ParseFiles("plural.tmpl")
-	if nil != err {
-		return err
-	}
+	var items []Source
+	var tests []Source
 
-	file, err := os.Create("plural/func.go")
-	if nil != err {
-		return err
-	}
-	defer file.Close()
-
-	var items []Item
 	for _, culture := range cultures {
 		fmt.Print(culture)
 
@@ -365,16 +494,47 @@ func createSource(headers string, ptr_plurals, ptr_ordinals *map[string]map[stri
 				}
 			}
 
-			vars, code := culture2code(ordinals, plurals, "\t\t")
-			items = append(items, Item{culture, vars, code})
+			vars, code, unit_tests := culture2code(ordinals, plurals, "\t\t")
+			items = append(items, FuncSource{culture, vars, code})
 
 			fmt.Println(" \u2713")
+
+			if len(unit_tests) > 0 {
+				tests = append(tests, UnitTestSource{culture, unit_tests})
+			}
 		}
 	}
-	return tmpl.Execute(file, struct {
-		Headers string
-		Items   []Item
-	}{headers, items})
+
+	if len(tests) > 0 {
+		err := createSource("plural_test.tmpl", "plural/func_test.go", headers, tests)
+		if nil != err {
+			return err
+		}
+	}
+	return createSource("plural.tmpl", "plural/func.go", headers, items)
+}
+
+func createSource(tmpl_filepath, dest_filepath, headers string, items []Source) error {
+	source, err := template.ParseFiles(tmpl_filepath)
+	if nil != err {
+		return err
+	}
+
+	file, err := os.Create(dest_filepath)
+	if nil != err {
+		return err
+	}
+	defer file.Close()
+
+	return source.Execute(file, struct {
+		Headers   string
+		Timestamp string
+		Items     []Source
+	}{
+		headers,
+		time.Now().Format(time.RFC1123Z),
+		items,
+	})
 }
 
 var user_culture = flag.String("culture", "*", "Culture subset")
@@ -398,7 +558,7 @@ func main() {
 		} else {
 			fmt.Println(" \u2713")
 
-			err = createSource(headers, &plurals, &ordinals)
+			err = createGoFiles(headers, &plurals, &ordinals)
 			if nil != err {
 				fmt.Println(err, "(╯°□°）╯︵ ┻━┻")
 			} else {
