@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"text/template"
 	"time"
@@ -153,10 +154,22 @@ func part2code(left, operator, right string) string {
 		pos := strings.Index(condition, "..")
 
 		if -1 != pos {
-			if "!=" == operator {
-				out = append(out, fmt.Sprintf("%s < %s || %s > %s", left, condition[:pos], left, condition[pos+2:]))
+			lower_bound, upper_bound := condition[:pos], condition[pos+2:]
+			lb, _ := strconv.Atoi(lower_bound)
+			ub, _ := strconv.Atoi(upper_bound)
+
+			if lb+1 == ub {
+				if "!=" == operator {
+					out = append(out, fmt.Sprintf("%s != %s && %s != %s", left, lower_bound, left, upper_bound))
+				} else {
+					out = append(out, fmt.Sprintf("%s == %s || %s == %s", left, lower_bound, left, upper_bound))
+				}
 			} else {
-				out = append(out, fmt.Sprintf("%s >= %s && %s <= %s", left, condition[:pos], left, condition[pos+2:]))
+				if "!=" == operator {
+					out = append(out, fmt.Sprintf("%s < %s || %s > %s", left, lower_bound, left, upper_bound))
+				} else {
+					out = append(out, fmt.Sprintf("%s >= %s && %s <= %s", left, lower_bound, left, upper_bound))
+				}
 			}
 		} else {
 			out = append(out, fmt.Sprintf("%s %s %s", left, operator, condition))
@@ -171,7 +184,7 @@ func part2code(left, operator, right string) string {
 	return "(" + strings.Join(out, ") || (") + ")"
 }
 
-func pattern2code(input string, ptr_keys *[]string) []string {
+func pattern2code(input string, ptr_vars *[]string) []string {
 	left, short, operator, logic := "", "", "", ""
 
 	var stmt []string
@@ -192,12 +205,12 @@ loop:
 		case '=':
 			if "" != buf {
 				left, operator, buf = buf, "==", ""
-				short = toVar(left, ptr_keys)
+				short = toVar(left, ptr_vars)
 			}
 
 		case '!':
 			left, operator, buf = buf, "!=", ""
-			short = toVar(left, ptr_keys)
+			short = toVar(left, ptr_vars)
 		}
 
 		if "" != buf {
@@ -251,7 +264,7 @@ loop:
 	return result
 }
 
-func rule2code(key string, data map[string]string, ptr_keys *[]string, padding string) string {
+func rule2code(key string, data map[string]string, ptr_vars *[]string, padding string) string {
 	if input, ok := data["pluralRule-count-"+key]; ok {
 		result := ""
 
@@ -261,7 +274,7 @@ func rule2code(key string, data map[string]string, ptr_keys *[]string, padding s
 			}
 			result += padding + "default:\n"
 		} else {
-			cases := pattern2code(input, ptr_keys)
+			cases := pattern2code(input, ptr_vars)
 			result += "\n" + padding + "case " + strings.Join(cases, ", ") + ":\n"
 		}
 		result += padding + "\treturn \"" + key + "\"\n"
@@ -270,17 +283,17 @@ func rule2code(key string, data map[string]string, ptr_keys *[]string, padding s
 	return ""
 }
 
-func map2code(data map[string]string, ptr_keys *[]string, padding string) string {
+func map2code(data map[string]string, ptr_vars *[]string, padding string) string {
 	if 1 == len(data) {
-		return rule2code("other", data, ptr_keys, padding)
+		return rule2code("other", data, ptr_vars, padding)
 	}
 	result := padding + "switch {\n"
-	result += rule2code("other", data, ptr_keys, padding)
-	result += rule2code("zero", data, ptr_keys, padding)
-	result += rule2code("one", data, ptr_keys, padding)
-	result += rule2code("two", data, ptr_keys, padding)
-	result += rule2code("few", data, ptr_keys, padding)
-	result += rule2code("many", data, ptr_keys, padding)
+	result += rule2code("other", data, ptr_vars, padding)
+	result += rule2code("zero", data, ptr_vars, padding)
+	result += rule2code("one", data, ptr_vars, padding)
+	result += rule2code("two", data, ptr_vars, padding)
+	result += rule2code("few", data, ptr_vars, padding)
+	result += rule2code("many", data, ptr_vars, padding)
 	result += padding + "}\n"
 	return result
 }
@@ -346,104 +359,86 @@ func map2test(ordinals, plurals map[string]string) []Test {
 
 func culture2code(ordinals, plurals map[string]string, padding string) (string, string, []Test) {
 	var code string
-	var keys []string
+	var vars []string
 
 	if nil == ordinals {
-		code = map2code(plurals, &keys, padding)
+		code = map2code(plurals, &vars, padding)
 	} else {
 		code = padding + "if ordinal {\n"
-		code += map2code(ordinals, &keys, padding+"\t")
+		code += map2code(ordinals, &vars, padding+"\t")
 		code += padding + "}\n\n"
-		code += map2code(plurals, &keys, padding)
+		code += map2code(plurals, &vars, padding)
 	}
 	tests := map2test(ordinals, plurals)
 
-	vars := ""
-	max := len(keys)
+	str_vars := ""
+	max := len(vars)
 
 	if max > 0 {
-		// tokens :
-		// f : decimal part
-		// i : int part
-		// v : len(f)
-		// t : f.replace(/0+$/, '')
-		var_f := varname('f', keys)
-		var_i := varname('i', keys)
-		var_v := varname('v', keys)
-		var_t := varname('t', keys)
+		// http://unicode.org/reports/tr35/tr35-numbers.html#Operands
+		//
+		// Symbol	Value
+		// n	    absolute value of the source number (integer and decimals).
+		// i	    integer digits of n.
+		// v	    number of visible fraction digits in n, with trailing zeros.
+		// w	    number of visible fraction digits in n, without trailing zeros.
+		// f	    visible fractional digits in n, with trailing zeros.
+		// t	    visible fractional digits in n, without trailing zeros.
+		var_f := varname('f', vars)
+		var_i := varname('i', vars)
+		var_n := varname('n', vars)
+		var_v := varname('v', vars)
+		var_t := varname('t', vars)
+		var_w := varname('w', vars)
 
-		if "_" != var_i && "_" == var_f && "_" == var_v && "_" == var_t {
-			vars += padding + "i := int(n)\n"
-
-			nMod(&keys)
-		} else {
-			if "_" != var_f || "_" != var_i || "_" != var_v || "_" != var_t {
-				vars += padding + fmt.Sprintf("%s, %s, %s, %s := fivt(n)\n", var_f, var_i, var_v, var_t)
-			}
-
-			if nMod(&keys) {
-				if "_" == var_i {
-					vars += padding + "i := int(n)\n"
-				}
-			}
+		if "_" != var_f || "_" != var_i || "_" != var_n || "_" != var_v || "_" != var_t || "_" != var_w {
+			str_vars += padding + fmt.Sprintf("%s, %s, %s, %s, %s, %s := finvtw(value)\n", var_f, var_i, var_n, var_v, var_t, var_w)
 		}
 
 		for i := 0; i < max; i += 2 {
-			k := keys[i]
-			v := keys[i+1]
+			k := vars[i]
+			v := vars[i+1]
 
 			if k != v {
-				vars += padding + k + " := " + v + "\n"
+				str_vars += padding + k + " := " + v + "\n"
 			}
 		}
 	}
-	return vars, code, tests
+	return str_vars, code, tests
 }
 
-func toVar(input string, ptr_keys *[]string) string {
-	if "n" == input {
-		return "n"
-	}
+func toVar(expr string, ptr_vars *[]string) string {
+	var varname string
 
-	var short string
-
-	if pos := strings.Index(input, "%"); -1 != pos {
-		short = input[:pos] + input[pos+1:]
-		input = input[:pos] + " % " + input[pos+1:]
+	if pos := strings.Index(expr, "%"); -1 != pos {
+		k, v := expr[:pos], expr[pos+1:]
+		varname = k + v
+		if "n" == k {
+			expr = "math.Mod(n, " + v + ")"
+		} else {
+			expr = k + " % " + v
+		}
 	} else {
-		short = input
+		varname = expr
 	}
 
 	exists := false
-	for i := 0; i < len(*ptr_keys); i += 2 {
-		if (*ptr_keys)[i] == short {
+	for i := 0; i < len(*ptr_vars); i += 2 {
+		if (*ptr_vars)[i] == varname {
 			exists = true
 			break
 		}
 	}
 
 	if !exists {
-		*ptr_keys = append(*ptr_keys, short, input)
+		*ptr_vars = append(*ptr_vars, varname, expr)
 	}
-	return short
+	return varname
 }
 
-func nMod(ptr_keys *[]string) bool {
-	result := false
-	keys := *ptr_keys
-	for i := 0; i < len(keys); i += 2 {
-		pos := strings.Index(keys[i+1], "n %")
-		if -1 != pos {
-			result = true
-			(*ptr_keys)[i+1] = "i %" + keys[i+1][pos+3:]
-		}
-	}
-	return result
-}
-
-func varname(char uint8, keys []string) string {
-	for i := 0; i < len(keys); i += 2 {
-		if char == keys[i][0] {
+func varname(char uint8, vars []string) string {
+	for i := 0; i < len(vars); i += 2 {
+		if char == vars[i][0] {
 			return string(char)
 		}
 	}

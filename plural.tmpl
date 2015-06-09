@@ -5,31 +5,18 @@ package plural
 
 import (
     "fmt"
-    "strconv"
-    "strings"
 )
 
-func fivt(n float64) (int, int, int, int) {
-    str_value := strconv.FormatFloat(n, 'f', -1, 64)
-    pos := strings.Index(str_value, ".")
-    if -1 == pos {
-        return 0, int(n), 0, 0
-    }
-    f, _ := strconv.Atoi(str_value[pos + 1:])
-    i, _ := strconv.Atoi(str_value[:pos])
-    return f, i, len(str_value) - pos - 1, f
-}
-
-var plural_funcs map[string]func(float64, bool) string
+var plural_funcs map[string]func(interface{}, bool) string
 
 func init() {
-    plural_funcs = make(map[string]func(float64, bool) string)
+    plural_funcs = make(map[string]func(interface{}, bool) string)
 {{ range $_, $item := .Items }}
-    plural_funcs["{{ $item.Culture }}"] = func(n float64, ordinal bool) string {
+    plural_funcs["{{ $item.Culture }}"] = func(value interface{}, ordinal bool) string {
 {{ $item.Code }}    }
 {{ end }}}
 
-func GetFunc(name string) (func(float64, bool) string, error) {
+func GetFunc(name string) (func(interface{}, bool) string, error) {
     fn, ok := plural_funcs[name]
     if !ok {
         return nil, fmt.Errorf("UnknownCulture: `%s`", name)

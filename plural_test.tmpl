@@ -8,7 +8,7 @@ import (
     "testing"
 )
 
-func getPluralFunc(t *testing.T, culture string) func(float64, bool) string {
+func getPluralFunc(t *testing.T, culture string) func(interface{}, bool) string {
     result, err := GetFunc(culture)
     if nil != err {
         t.Errorf("Unexpected error: %s", err.Error())
@@ -17,7 +17,7 @@ func getPluralFunc(t *testing.T, culture string) func(float64, bool) string {
     return result
 }
 
-func testNamedKey(t *testing.T, fn func(float64, bool) string, input float64, expected, name string, ordinal bool) {
+func testNamedKey(t *testing.T, fn func(interface{}, bool) string, input interface{}, expected, name string, ordinal bool) {
     result := fn(input, ordinal)
     if result != expected {
         t.Errorf("`%s` expecting <%v> but got <%v>", name, expected, result)
@@ -26,9 +26,10 @@ func testNamedKey(t *testing.T, fn func(float64, bool) string, input float64, ex
     }
 }
 {{ range $_, $item := .Items }}
-func TestCulture_{{ $item.CultureId }}(t *testing.T) {
+func TestPluralFunc_{{ $item.CultureId }}(t *testing.T) {
     fn := getPluralFunc(t, "{{ $item.Culture }}")
     if nil != fn {
-{{ $item.Code }}    }
+{{ $item.Code }}
+    }
 }
 {{ end }}
