@@ -5,7 +5,12 @@ package plural
 
 import (
     "fmt"
+    "math"
 )
+
+func mod(x, y float64) float64 {
+    return math.Mod(x, y)
+}
 
 var plural_funcs map[string]func(interface{}, bool) string
 

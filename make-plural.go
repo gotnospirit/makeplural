@@ -146,6 +146,14 @@ func get(url, key string, headers *string) (map[string]map[string]string, error)
 	return data, nil
 }
 
+func rangeCondition(varname string, lower, upper int, operator string) []string {
+	var result []string
+	for i := lower; i <= upper; i++ {
+		result = append(result, fmt.Sprintf("%s %s %d", varname, operator, i))
+	}
+	return result
+}
+
 func part2code(left, operator, right string) string {
 	var out []string
 
@@ -158,18 +166,11 @@ func part2code(left, operator, right string) string {
 			lb, _ := strconv.Atoi(lower_bound)
 			ub, _ := strconv.Atoi(upper_bound)
 
-			if lb+1 == ub {
-				if "!=" == operator {
-					out = append(out, fmt.Sprintf("%s != %s && %s != %s", left, lower_bound, left, upper_bound))
-				} else {
-					out = append(out, fmt.Sprintf("%s == %s || %s == %s", left, lower_bound, left, upper_bound))
-				}
+			r := rangeCondition(left, lb, ub, operator)
+			if "!=" == operator {
+				out = append(out, strings.Join(r, " && "))
 			} else {
-				if "!=" == operator {
-					out = append(out, fmt.Sprintf("%s < %s || %s > %s", left, lower_bound, left, upper_bound))
-				} else {
-					out = append(out, fmt.Sprintf("%s >= %s && %s <= %s", left, lower_bound, left, upper_bound))
-				}
+				out = append(out, strings.Join(r, " || "))
 			}
 		} else {
 			out = append(out, fmt.Sprintf("%s %s %s", left, operator, condition))
@@ -335,7 +336,7 @@ func pattern2test(expected, input string, ordinal bool) []Test {
 			}
 		} else if strings.HasPrefix(pattern, "decimal") {
 			for _, value := range splitValues(pattern[8:]) {
-				result = append(result, UnitTest{ordinal, expected, value})
+				result = append(result, UnitTest{ordinal, expected, "\"" + value + "\""})
 			}
 		}
 	}
@@ -407,21 +408,7 @@ func culture2code(ordinals, plurals map[string]string, padding string) (string, 
 	return str_vars, code, tests
 }
 
-func toVar(expr string, ptr_vars *[]string) string {
-	var varname string
-
-	if pos := strings.Index(expr, "%"); -1 != pos {
-		k, v := expr[:pos], expr[pos+1:]
-		varname = k + v
-		if "n" == k {
-			expr = "math.Mod(n, " + v + ")"
-		} else {
-			expr = k + " % " + v
-		}
-	} else {
-		varname = expr
-	}
-
+func addVar(varname, expr string, ptr_vars *[]string) string {
 	exists := false
 	for i := 0; i < len(*ptr_vars); i += 2 {
 		if (*ptr_vars)[i] == varname {
@@ -434,6 +421,23 @@ func toVar(expr string, ptr_vars *[]string) string {
 		*ptr_vars = append(*ptr_vars, varname, expr)
 	}
 	return varname
+}
+
+func toVar(expr string, ptr_vars *[]string) string {
+	var varname string
+
+	if pos := strings.Index(expr, "%"); -1 != pos {
+		k, v := expr[:pos], expr[pos+1:]
+		varname = k + v
+		if "n" == k {
+			expr = "mod(n, " + v + ")"
+		} else {
+			expr = k + " % " + v
+		}
+	} else {
+		varname = expr
+	}
+	return addVar(varname, expr, ptr_vars)
 }
 
 func varname(char uint8, vars []string) string {

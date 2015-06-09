@@ -22,7 +22,7 @@ func testNamedKey(t *testing.T, fn func(interface{}, bool) string, input interfa
     if result != expected {
         t.Errorf("`%s` expecting <%v> but got <%v>", name, expected, result)
     } else if testing.Verbose() {
-        fmt.Printf("- Got expected result <%s>\n", result)
+        fmt.Printf("- Got expected result <%s> for `%v`\n", result, input)
     }
 }
 {{ range $_, $item := .Items }}
