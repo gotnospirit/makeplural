@@ -6,10 +6,32 @@ package plural
 import (
     "fmt"
     "math"
+    "strconv"
 )
 
 func mod(x, y float64) float64 {
     return math.Mod(x, y)
+}
+
+func float(v interface{}) float64 {
+    switch v.(type) {
+    case int:
+        return float64(v.(int))
+
+    case int64:
+        return float64(v.(int64))
+
+    case float64:
+        return v.(float64)
+
+    case string:
+		floatval, err := strconv.ParseFloat(v.(string), 64)
+		if nil != err {
+			return 0.0
+		}
+        return floatval
+    }
+    return 0.0
 }
 
 var plural_funcs map[string]func(interface{}, bool) string

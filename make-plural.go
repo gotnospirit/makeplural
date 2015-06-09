@@ -38,6 +38,10 @@ type (
 		ordinal         bool
 		expected, value string
 	}
+
+	Op struct {
+		previous_logic, left, operator, right, next_logic string
+	}
 )
 
 func (x FuncSource) Culture() string {
@@ -45,7 +49,7 @@ func (x FuncSource) Culture() string {
 }
 
 func (x FuncSource) CultureId() string {
-	return Sanitize(x.culture)
+	return sanitize(x.culture)
 }
 
 func (x FuncSource) Code() string {
@@ -62,7 +66,7 @@ func (x UnitTestSource) Culture() string {
 }
 
 func (x UnitTestSource) CultureId() string {
-	return Sanitize(x.culture)
+	return sanitize(x.culture)
 }
 
 func (x UnitTestSource) Code() string {
@@ -83,12 +87,33 @@ func (x UnitTest) toString() string {
 	)
 }
 
-func Sanitize(input string) string {
+func sanitize(input string) string {
 	var result string
 	for _, char := range input {
 		switch {
 		case char >= 'a' && char <= 'z', char >= 'A' && char <= 'Z':
 			result += string(char)
+		}
+	}
+	return result
+}
+
+func (x Op) conditions() []string {
+	var result []string
+
+	conditions := strings.Split(x.right, ",")
+	for _, condition := range conditions {
+		pos := strings.Index(condition, "..")
+
+		if -1 != pos {
+			lower_bound, upper_bound := condition[:pos], condition[pos+2:]
+			lb, _ := strconv.Atoi(lower_bound)
+			ub, _ := strconv.Atoi(upper_bound)
+
+			r := rangeCondition(x.left, lb, ub, x.operator)
+			result = append(result, r...)
+		} else {
+			result = append(result, fmt.Sprintf("%s %s %s", x.left, x.operator, condition))
 		}
 	}
 	return result
@@ -154,43 +179,10 @@ func rangeCondition(varname string, lower, upper int, operator string) []string 
 	return result
 }
 
-func part2code(left, operator, right string) string {
-	var out []string
-
-	conditions := strings.Split(right, ",")
-	for _, condition := range conditions {
-		pos := strings.Index(condition, "..")
-
-		if -1 != pos {
-			lower_bound, upper_bound := condition[:pos], condition[pos+2:]
-			lb, _ := strconv.Atoi(lower_bound)
-			ub, _ := strconv.Atoi(upper_bound)
-
-			r := rangeCondition(left, lb, ub, operator)
-			if "!=" == operator {
-				out = append(out, strings.Join(r, " && "))
-			} else {
-				out = append(out, strings.Join(r, " || "))
-			}
-		} else {
-			out = append(out, fmt.Sprintf("%s %s %s", left, operator, condition))
-		}
-	}
-
-	if 1 == len(out) {
-		return out[0]
-	} else if "!=" == operator {
-		return "(" + strings.Join(out, ") && (") + ")"
-	}
-	return "(" + strings.Join(out, ") || (") + ")"
-}
-
 func pattern2code(input string, ptr_vars *[]string) []string {
 	left, short, operator, logic := "", "", "", ""
 
-	var stmt []string
-	var conditions [][]string
-
+	var ops []Op
 	buf := ""
 loop:
 	for _, char := range input {
@@ -218,23 +210,13 @@ loop:
 			pos := strings.Index(buf, "and")
 
 			if -1 != pos {
-				if "OR" == logic {
-					conditions = append(conditions, stmt)
-					stmt = []string{}
-				}
-				stmt = append(stmt, part2code(short, operator, buf[:pos]))
-
+				ops = append(ops, Op{logic, short, operator, buf[:pos], "AND"})
 				buf, left, operator, logic = "", "", "", "AND"
 			} else {
 				pos = strings.Index(buf, "or")
 
 				if -1 != pos {
-					if "OR" == logic {
-						conditions = append(conditions, stmt)
-						stmt = []string{}
-					}
-					stmt = append(stmt, part2code(short, operator, buf[:pos]))
-
+					ops = append(ops, Op{logic, short, operator, buf[:pos], "OR"})
 					buf, left, operator, logic = "", "", "", "OR"
 				}
 			}
@@ -242,27 +224,89 @@ loop:
 	}
 
 	if "" != buf {
-		if "OR" == logic {
-			if len(stmt) > 0 {
-				conditions = append(conditions, stmt, []string{part2code(short, operator, buf)})
-			} else {
-				conditions = append(conditions, []string{part2code(short, operator, buf)})
-			}
+		ops = append(ops, Op{logic, short, operator, buf, ""})
+	}
+
+	if 1 == len(ops) {
+		conditions := ops[0].conditions()
+		if "==" == ops[0].operator {
+			return conditions
 		} else {
-			stmt = append(stmt, part2code(short, operator, buf))
-			conditions = append(conditions, stmt)
+			return []string{strings.Join(conditions, " && ")}
 		}
 	}
 
 	var result []string
-	for _, condition := range conditions {
-		if len(condition) > 1 {
-			result = append(result, "("+strings.Join(condition, ") && (")+")")
+	var buffer []string
+
+	buffer_length := 0
+	for _, o := range ops {
+		conditions := o.conditions()
+		logic = o.previous_logic
+		nextLogic := o.next_logic
+		operator := o.operator
+
+		if "OR" == logic && buffer_length > 0 {
+			result = append(result, strings.Join(buffer, ", "))
+			buffer = []string{}
+			buffer_length = 0
+		}
+
+		if ("" == logic && "OR" == nextLogic) || ("OR" == logic && "OR" == nextLogic) || ("OR" == logic && "" == nextLogic) {
+			if "==" == operator {
+				buffer = append(buffer, conditions...)
+			} else {
+				buffer = append(buffer, strings.Join(conditions, " && "))
+			}
+			buffer_length = len(buffer)
+		} else if "AND" == logic && ("AND" == nextLogic || "" == nextLogic) {
+			if "==" == operator {
+				buffer[buffer_length-1] += " && " + joinOr(conditions)
+			} else {
+				buffer[buffer_length-1] += " && " + strings.Join(conditions, " && ")
+			}
+		} else if "" == logic && "AND" == nextLogic {
+			if "==" == operator {
+				buffer = append(buffer, joinOr(conditions))
+			} else {
+				buffer = append(buffer, strings.Join(conditions, " && "))
+			}
+			buffer_length = len(buffer)
+		} else if "OR" == logic && "AND" == nextLogic {
+			if "==" == operator {
+				if len(conditions) > 1 {
+					buffer = append(buffer, joinOr(conditions))
+				} else {
+					buffer = append(buffer, conditions...)
+				}
+			} else {
+				buffer = append(buffer, strings.Join(conditions, " && "))
+			}
+			buffer_length = len(buffer)
+		} else if "AND" == logic && "OR" == nextLogic {
+			if "==" == operator {
+				buffer[buffer_length-1] += " && " + joinOr(conditions)
+			} else {
+				buffer[buffer_length-1] += " && " + strings.Join(conditions, " && ")
+			}
+		}
+	}
+
+	if len(buffer) > 0 {
+		if "OR" == logic {
+			result = append(result, buffer...)
 		} else {
-			result = append(result, condition[0])
+			result = append(result, strings.Join(buffer, " && "))
 		}
 	}
 	return result
+}
+
+func joinOr(data []string) string {
+	if len(data) > 1 {
+		return "(" + strings.Join(data, " || ") + ")"
+	}
+	return data[0]
 }
 
 func rule2code(key string, data map[string]string, ptr_vars *[]string, padding string) string {
@@ -392,8 +436,20 @@ func culture2code(ordinals, plurals map[string]string, padding string) (string, 
 		var_t := varname('t', vars)
 		var_w := varname('w', vars)
 
-		if "_" != var_f || "_" != var_i || "_" != var_n || "_" != var_v || "_" != var_t || "_" != var_w {
+		if "_" != var_f || "_" != var_v || "_" != var_t || "_" != var_w {
 			str_vars += padding + fmt.Sprintf("%s, %s, %s, %s, %s, %s := finvtw(value)\n", var_f, var_i, var_n, var_v, var_t, var_w)
+		} else {
+			if "_" != var_n {
+				if "_" != var_i {
+					str_vars += padding + "flt := float(value)\n"
+					str_vars += padding + "n := math.Abs(flt)\n"
+					str_vars += padding + "i := int64(flt)\n"
+				} else {
+					str_vars += padding + "n := math.Abs(float(value))\n"
+				}
+			} else if "_" != var_i {
+				str_vars += padding + "i := int64(float(value))\n"
+			}
 		}
 
 		for i := 0; i < max; i += 2 {
